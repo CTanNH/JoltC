@@ -828,11 +828,12 @@ JPC_API float JPC_SixDOFConstraint_GetMaxFriction(const JPC_SixDOFConstraint* se
 JPC_API JPC_Quat JPC_SixDOFConstraint_GetRotationInConstraintSpace(const JPC_SixDOFConstraint* self);
 
 /// Motor settings
-// MotorSettings & GetMotorSettings(EAxis inAxis)
-// const MotorSettings & GetMotorSettings(EAxis inAxis) const
+typedef struct JPC_MotorSettings JPC_MotorSettings;
+JPC_API void JPC_SixDOFConstraint_GetMotorSettings(JPC_SixDOFConstraint* self, JPC_SixDOFConstraint_Axis inAxis, JPC_MotorSettings* outSettings);
+JPC_API void JPC_SixDOFConstraint_SetMotorSettings(JPC_SixDOFConstraint* self, JPC_SixDOFConstraint_Axis inAxis, const JPC_MotorSettings* inSettings);
 
-// void SetMotorState(EAxis inAxis, EMotorState inState);
-// EMotorState GetMotorState(EAxis inAxis) const
+JPC_API void JPC_SixDOFConstraint_SetMotorState(JPC_SixDOFConstraint* self, JPC_SixDOFConstraint_Axis inAxis, JPC_MotorState inState);
+JPC_API JPC_MotorState JPC_SixDOFConstraint_GetMotorState(const JPC_SixDOFConstraint* self, JPC_SixDOFConstraint_Axis inAxis);
 
 JPC_API JPC_Vec3 JPC_SixDOFConstraint_GetTargetVelocityCS(const JPC_SixDOFConstraint* self);
 JPC_API void JPC_SixDOFConstraint_SetTargetVelocityCS(JPC_SixDOFConstraint* self, JPC_Vec3 inVelocity);
@@ -974,6 +975,8 @@ typedef struct JPC_SixDOFConstraintSettings {
 
 	float LimitMin[6];
 	float LimitMax[6];
+
+	JPC_MotorSettings MotorSettings[6];
 
 	// TODO: LimitsSpringSettings
 } JPC_SixDOFConstraintSettings;
@@ -1352,6 +1355,32 @@ typedef struct JPC_BodyCreationSettings JPC_BodyCreationSettings;
 JPC_API JPC_BodyCreationSettings* JPC_BodyCreationSettings_new();
 
 ////////////////////////////////////////////////////////////////////////////////
+// MotionProperties (owned by its Body; obtained via JPC_Body_GetMotionProperties)
+
+typedef struct JPC_MotionProperties JPC_MotionProperties;
+
+// Layout-compatible with JPH::MassProperties { float mMass; Mat44 mInertia; }.
+typedef struct JPC_MassProperties {
+	float Mass;
+	float Inertia[16]; // column-major Mat44
+} JPC_MassProperties;
+
+JPC_API float JPC_MotionProperties_GetLinearDamping(const JPC_MotionProperties* self);
+JPC_API void JPC_MotionProperties_SetLinearDamping(JPC_MotionProperties* self, float inLinearDamping);
+JPC_API float JPC_MotionProperties_GetAngularDamping(const JPC_MotionProperties* self);
+JPC_API void JPC_MotionProperties_SetAngularDamping(JPC_MotionProperties* self, float inAngularDamping);
+
+JPC_API float JPC_MotionProperties_GetInverseMass(const JPC_MotionProperties* self);
+JPC_API float JPC_MotionProperties_GetInverseMassUnchecked(const JPC_MotionProperties* self);
+JPC_API void JPC_MotionProperties_SetInverseMass(JPC_MotionProperties* self, float inInverseMass);
+
+/// Set mass and scale the inertia tensor to match (finite current mass required).
+JPC_API void JPC_MotionProperties_ScaleToMass(JPC_MotionProperties* self, float inMass);
+
+/// Set the mass and inertia tensor (MotionProperties::SetMassProperties).
+JPC_API void JPC_MotionProperties_SetMassProperties(JPC_MotionProperties* self, JPC_AllowedDOFs inAllowedDOFs, const JPC_MassProperties* inMass);
+
+////////////////////////////////////////////////////////////////////////////////
 // Body
 
 JPC_API JPC_BodyID JPC_Body_GetID(const JPC_Body* self);
@@ -1426,10 +1455,9 @@ JPC_API JPC_RMat44 JPC_Body_GetCenterOfMassTransform(const JPC_Body* self);
 JPC_API JPC_RMat44 JPC_Body_GetInverseCenterOfMassTransform(const JPC_Body* self);
 
 // JPC_API const AABox & JPC_Body_GetWorldSpaceBounds(const JPC_Body* self);
-// JPC_API const MotionProperties *JPC_Body_GetMotionProperties(const JPC_Body* self)
-// JPC_API MotionProperties * JPC_Body_GetMotionProperties(JPC_Body* self);
-// JPC_API const MotionProperties *JPC_Body_GetMotionPropertiesUnchecked(const JPC_Body* self)
-// JPC_API MotionProperties * JPC_Body_GetMotionPropertiesUnchecked(JPC_Body* self);
+// (const overloads are not representable in C; use the non-const functions below)
+JPC_API JPC_MotionProperties* JPC_Body_GetMotionProperties(JPC_Body* self);
+JPC_API JPC_MotionProperties* JPC_Body_GetMotionPropertiesUnchecked(JPC_Body* self);
 
 JPC_API uint64_t JPC_Body_GetUserData(const JPC_Body* self);
 JPC_API void JPC_Body_SetUserData(JPC_Body* self, uint64_t inUserData);

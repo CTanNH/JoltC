@@ -8,6 +8,7 @@
 #include <Jolt/Physics/Body/BodyActivationListener.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyLockMulti.h>
+#include <Jolt/Physics/Body/MotionProperties.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
@@ -130,6 +131,8 @@ DESTRUCTOR(JPC_JobSystemSingleThreaded)
 OPAQUE_WRAPPER(JPC_Shape, JPH::Shape)
 OPAQUE_WRAPPER(JPC_CompoundShape, JPH::CompoundShape)
 OPAQUE_WRAPPER(JPC_Body, JPH::Body)
+// MotionProperties is owned by its Body; no DESTRUCTOR on purpose.
+OPAQUE_WRAPPER(JPC_MotionProperties, JPH::MotionProperties)
 
 OPAQUE_WRAPPER(JPC_VertexList, JPH::VertexList)
 DESTRUCTOR(JPC_VertexList)
@@ -1074,7 +1077,9 @@ JPC_API float JPC_SixDOFConstraint_GetLimitsMax(const JPC_SixDOFConstraint* self
 	return to_jph(self)->GetLimitsMax((JPH::SixDOFConstraint::EAxis)inAxis);
 }
 
-JPC_API bool JPC_SixDOFConstraint_IsFreeAxis(const JPC_SixDOFConstraint* self, JPC_SixDOFConstraint_Axis inAxis);
+JPC_API bool JPC_SixDOFConstraint_IsFreeAxis(const JPC_SixDOFConstraint* self, JPC_SixDOFConstraint_Axis inAxis) {
+	return to_jph(self)->IsFreeAxis((JPH::SixDOFConstraint::EAxis)inAxis);
+}
 
 // const SpringSettings & GetLimitsSpringSettings(JPC_SixDOFConstraint_Axis inAxis) const { JPH_ASSERT(inAxis < JPC_SixDOFConstraint_Axis::NumTranslation); return mLimitsSpringSettings[inAxis]; }
 // void SetLimitsSpringSettings(JPC_SixDOFConstraint_Axis inAxis, const SpringSettings& inLimitsSpringSettings) { JPH_ASSERT(inAxis < JPC_SixDOFConstraint_Axis::NumTranslation); mLimitsSpringSettings[inAxis] = inLimitsSpringSettings; CacheHasSpringLimits(); }
@@ -1092,11 +1097,26 @@ JPC_API JPC_Quat JPC_SixDOFConstraint_GetRotationInConstraintSpace(const JPC_Six
 }
 
 /// Motor settings
-// MotorSettings & GetMotorSettings(EAxis inAxis)
-// const MotorSettings & GetMotorSettings(EAxis inAxis) const
+// Forward declarations: MotorSettings conversion helpers are defined in the
+// settings-conversion block further down in this file.
+JPC_IMPL void JPC_MotorSettings_to_jpc(JPC_MotorSettings* outJpc, const JPH::MotorSettings* inJph);
+JPC_IMPL void JPC_MotorSettings_to_jph(const JPC_MotorSettings* inJpc, JPH::MotorSettings* outJph);
 
-// void SetMotorState(EAxis inAxis, EMotorState inState);
-// EMotorState GetMotorState(EAxis inAxis) const
+JPC_API void JPC_SixDOFConstraint_GetMotorSettings(JPC_SixDOFConstraint* self, JPC_SixDOFConstraint_Axis inAxis, JPC_MotorSettings* outSettings) {
+	JPC_MotorSettings_to_jpc(outSettings, &to_jph(self)->GetMotorSettings((JPH::SixDOFConstraint::EAxis)inAxis));
+}
+
+JPC_API void JPC_SixDOFConstraint_SetMotorSettings(JPC_SixDOFConstraint* self, JPC_SixDOFConstraint_Axis inAxis, const JPC_MotorSettings* inSettings) {
+	JPC_MotorSettings_to_jph(inSettings, &to_jph(self)->GetMotorSettings((JPH::SixDOFConstraint::EAxis)inAxis));
+}
+
+JPC_API void JPC_SixDOFConstraint_SetMotorState(JPC_SixDOFConstraint* self, JPC_SixDOFConstraint_Axis inAxis, JPC_MotorState inState) {
+	to_jph(self)->SetMotorState((JPH::SixDOFConstraint::EAxis)inAxis, to_jph(inState));
+}
+
+JPC_API JPC_MotorState JPC_SixDOFConstraint_GetMotorState(const JPC_SixDOFConstraint* self, JPC_SixDOFConstraint_Axis inAxis) {
+	return to_jpc(to_jph(self)->GetMotorState((JPH::SixDOFConstraint::EAxis)inAxis));
+}
 
 JPC_API JPC_Vec3 JPC_SixDOFConstraint_GetTargetVelocityCS(const JPC_SixDOFConstraint* self) {
 	return to_jpc(to_jph(self)->GetTargetVelocityCS());
@@ -1405,6 +1425,8 @@ JPC_IMPL void JPC_SixDOFConstraintSettings_to_jpc(
 	std::copy(inJph->mMaxFriction, inJph->mMaxFriction + 6, outJpc->MaxFriction);
 	std::copy(inJph->mLimitMin, inJph->mLimitMin + 6, outJpc->LimitMin);
 	std::copy(inJph->mLimitMax, inJph->mLimitMax + 6, outJpc->LimitMax);
+	for (int i = 0; i < 6; ++i)
+		JPC_MotorSettings_to_jpc(&outJpc->MotorSettings[i], &inJph->mMotorSettings[i]);
 
 	// TODO: LimitsSpringSettings
 }
@@ -1425,6 +1447,8 @@ JPC_IMPL void JPC_SixDOFConstraintSettings_to_jph(
 	std::copy(inJpc->MaxFriction, inJpc->MaxFriction + 6, outJph->mMaxFriction);
 	std::copy(inJpc->LimitMin, inJpc->LimitMin + 6, outJph->mLimitMin);
 	std::copy(inJpc->LimitMax, inJpc->LimitMax + 6, outJph->mLimitMax);
+	for (int i = 0; i < 6; ++i)
+		JPC_MotorSettings_to_jph(&inJpc->MotorSettings[i], &outJph->mMotorSettings[i]);
 
 	// TODO: LimitsSpringSettings
 }
@@ -2427,10 +2451,57 @@ JPC_API JPC_RMat44 JPC_Body_GetInverseCenterOfMassTransform(const JPC_Body* self
 }
 
 // JPC_API const AABox & JPC_Body_GetWorldSpaceBounds(const JPC_Body* self);
-// JPC_API const MotionProperties *JPC_Body_GetMotionProperties(const JPC_Body* self)
-// JPC_API MotionProperties * JPC_Body_GetMotionProperties(JPC_Body* self);
-// JPC_API const MotionProperties *JPC_Body_GetMotionPropertiesUnchecked(const JPC_Body* self)
-// JPC_API MotionProperties * JPC_Body_GetMotionPropertiesUnchecked(JPC_Body* self);
+// (const overloads are not representable in C; use the non-const functions below)
+JPC_API JPC_MotionProperties* JPC_Body_GetMotionProperties(JPC_Body* self) {
+	return to_jpc(to_jph(self)->GetMotionProperties());
+}
+
+JPC_API JPC_MotionProperties* JPC_Body_GetMotionPropertiesUnchecked(JPC_Body* self) {
+	return to_jpc(to_jph(self)->GetMotionPropertiesUnchecked());
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// MotionProperties
+
+JPC_API float JPC_MotionProperties_GetLinearDamping(const JPC_MotionProperties* self) {
+	return to_jph(self)->GetLinearDamping();
+}
+
+JPC_API void JPC_MotionProperties_SetLinearDamping(JPC_MotionProperties* self, float inLinearDamping) {
+	to_jph(self)->SetLinearDamping(inLinearDamping);
+}
+
+JPC_API float JPC_MotionProperties_GetAngularDamping(const JPC_MotionProperties* self) {
+	return to_jph(self)->GetAngularDamping();
+}
+
+JPC_API void JPC_MotionProperties_SetAngularDamping(JPC_MotionProperties* self, float inAngularDamping) {
+	to_jph(self)->SetAngularDamping(inAngularDamping);
+}
+
+JPC_API float JPC_MotionProperties_GetInverseMass(const JPC_MotionProperties* self) {
+	return to_jph(self)->GetInverseMass();
+}
+
+JPC_API float JPC_MotionProperties_GetInverseMassUnchecked(const JPC_MotionProperties* self) {
+	return to_jph(self)->GetInverseMassUnchecked();
+}
+
+JPC_API void JPC_MotionProperties_SetInverseMass(JPC_MotionProperties* self, float inInverseMass) {
+	to_jph(self)->SetInverseMass(inInverseMass);
+}
+
+JPC_API void JPC_MotionProperties_ScaleToMass(JPC_MotionProperties* self, float inMass) {
+	to_jph(self)->ScaleToMass(inMass);
+}
+
+JPC_API void JPC_MotionProperties_SetMassProperties(JPC_MotionProperties* self, JPC_AllowedDOFs inAllowedDOFs, const JPC_MassProperties* inMass) {
+	JPH::MassProperties mass;
+	mass.mMass = inMass->Mass;
+	static_assert(sizeof(mass.mInertia) == sizeof(inMass->Inertia), "Mat44 layout mismatch");
+	memcpy(&mass.mInertia, inMass->Inertia, sizeof(mass.mInertia));
+	to_jph(self)->SetMassProperties(to_jph(inAllowedDOFs), mass);
+}
 
 JPC_API uint64_t JPC_Body_GetUserData(const JPC_Body* self) {
 	return to_jph(self)->GetUserData();
@@ -3045,10 +3116,28 @@ JPC_API void JPC_PhysicsSystem_OptimizeBroadPhase(JPC_PhysicsSystem* self) {
 }
 
 JPC_API void JPC_PhysicsSystem_AddConstraint(JPC_PhysicsSystem* self, JPC_Constraint* constraint) {
+	// Ownership notes (this is the "constraint ownership fix"):
+	//
+	// ConstraintManager stores constraints in `Array<Ref<Constraint>>`
+	// (Jolt/Physics/Constraints/ConstraintManager.h), so AddConstraint takes
+	// one reference on the system's behalf (refcount 0 -> 1) and
+	// RemoveConstraint releases it again -- which DELETES a refcount-0
+	// constraint on the spot (`RefTarget::Release`, fetch_sub == 1 -> delete).
+	// A caller that created a constraint through `JPC_*ConstraintSettings_Create`
+	// (refcount 0) and then did the intuitive "Remove then Release/_delete"
+	// therefore hit a use-after-free / double free (heap corruption, later
+	// `GetRefCount` reading garbage).
 	to_jph(self)->AddConstraint(to_jph(constraint));
 }
 
 JPC_API void JPC_PhysicsSystem_RemoveConstraint(JPC_PhysicsSystem* self, JPC_Constraint* constraint) {
+	// Take one reference BEFORE the remove so the ConstraintManager's internal
+	// `Ref<Constraint>` release cannot delete the object. Afterwards the
+	// refcount is exactly 1 and belongs to the caller: the removed constraint
+	// stays valid/readable and is freed by exactly one `JPC_Constraint_Release`.
+	// Add/remove cycles are symmetric (net refcount change 0 per cycle), so
+	// removing and re-adding the same constraint stays balanced too.
+	to_jph(constraint)->AddRef();
 	to_jph(self)->RemoveConstraint(to_jph(constraint));
 }
 
