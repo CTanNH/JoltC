@@ -1864,6 +1864,9 @@ JPC_API float JPC_VehicleConstraint_GetWheelSpeedAtClutch(const JPC_VehicleConst
 JPC_API void JPC_VehicleConstraint_GetWheelState(const JPC_VehicleConstraint* self, uint32_t inIndex, JPC_VehicleWheelState* outState);
 
 
+// Wraps `inner` so its centre of mass is shifted by `offset` (body local). baiSuiShan addition.
+JPC_API bool JPC_OffsetCenterOfMassShape_Create(JPC_Shape* inner, JPC_Vec3 offset, JPC_Shape** outShape, JPC_String** outError);
+
 #ifdef __cplusplus
 }
 #endif

@@ -22,6 +22,7 @@
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/MutableCompoundShape.h>
+#include <Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.h>
 #include <Jolt/Physics/Collision/Shape/PlaneShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
@@ -3437,4 +3438,9 @@ JPC_API void JPC_VehicleConstraint_GetWheelState(const JPC_VehicleConstraint* se
 	out->SuspensionLambda = w->GetSuspensionLambda();
 	out->LongitudinalLambda = w->GetLongitudinalLambda();
 	out->LateralLambda = w->GetLateralLambda();
+}
+
+JPC_API bool JPC_OffsetCenterOfMassShape_Create(JPC_Shape* inner, JPC_Vec3 offset, JPC_Shape** outShape, JPC_String** outError) {
+	JPH::OffsetCenterOfMassShapeSettings settings(to_jph(offset), to_jph(inner));
+	return HandleShapeResult(settings.Create(), outShape, outError);
 }
