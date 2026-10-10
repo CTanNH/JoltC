@@ -3115,6 +3115,16 @@ JPC_API void JPC_PhysicsSystem_OptimizeBroadPhase(JPC_PhysicsSystem* self) {
 	to_jph(self)->OptimizeBroadPhase();
 }
 
+JPC_API void JPC_PhysicsSystem_SetSolverSteps(JPC_PhysicsSystem* self, uint32_t inSteps) {
+	// Constraint-solver Gauss-Seidel passes per step (PhysicsSettings
+	// mNumSolverSteps). Read-modify-write keeps every other setting at the
+	// Jolt defaults the C API Init already baked in.
+	JPH::PhysicsSettings settings = to_jph(self)->GetPhysicsSettings();
+	settings.mNumVelocitySteps = inSteps;
+	settings.mNumPositionSteps = inSteps;
+	to_jph(self)->SetPhysicsSettings(settings);
+}
+
 JPC_API void JPC_PhysicsSystem_AddConstraint(JPC_PhysicsSystem* self, JPC_Constraint* constraint) {
 	// Ownership notes (this is the "constraint ownership fix"):
 	//
