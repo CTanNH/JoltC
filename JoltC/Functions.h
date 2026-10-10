@@ -1733,6 +1733,137 @@ JPC_API void JPC_PhysicsSystem_SetSimShapeFilter(JPC_PhysicsSystem* self, const 
 
 JPC_API void JPC_PhysicsSystem_SetContactListener(JPC_PhysicsSystem* self, JPC_ContactListener* inContactListener);
 
+
+////////////////////////////////////////////////////////////////////////////////
+// Vehicle: VehicleConstraint + WheeledVehicleController (baiSuiShan addition)
+//
+// Flattened settings (fixed-capacity arrays) so the whole description is a
+// plain C struct. A curve with Count == 0 keeps Jolt's default curve.
+
+#define JPC_VEHICLE_MAX_WHEELS 8
+#define JPC_VEHICLE_MAX_CURVE 8
+#define JPC_VEHICLE_MAX_GEARS 8
+
+typedef struct JPC_VehicleCurve {
+	uint32_t Count;
+	float X[JPC_VEHICLE_MAX_CURVE];
+	float Y[JPC_VEHICLE_MAX_CURVE];
+} JPC_VehicleCurve;
+
+typedef struct JPC_VehicleWheelSettings {
+	JPC_Vec3 Position;              // suspension attachment, body local
+	JPC_Vec3 SuspensionDirection;   // body local, points down
+	JPC_Vec3 SteeringAxis;          // body local, points up
+	JPC_Vec3 WheelUp;
+	JPC_Vec3 WheelForward;
+	float SuspensionMinLength;
+	float SuspensionMaxLength;
+	float SuspensionPreloadLength;
+	float SuspensionFrequency;      // Hz
+	float SuspensionDamping;        // ratio
+	float Radius;
+	float Width;
+	float Inertia;
+	float AngularDamping;
+	float MaxSteerAngle;
+	float MaxBrakeTorque;
+	float MaxHandBrakeTorque;
+	JPC_VehicleCurve LongitudinalFriction; // x: slip ratio, y: friction
+	JPC_VehicleCurve LateralFriction;      // x: slip angle (deg), y: friction
+} JPC_VehicleWheelSettings;
+
+typedef struct JPC_VehicleDifferentialSettings {
+	int LeftWheel;
+	int RightWheel;
+	float DifferentialRatio;
+	float LeftRightSplit;
+	float LimitedSlipRatio;
+	float EngineTorqueRatio;
+} JPC_VehicleDifferentialSettings;
+
+typedef struct JPC_VehicleAntiRollBarSettings {
+	int LeftWheel;
+	int RightWheel;
+	float Stiffness;
+} JPC_VehicleAntiRollBarSettings;
+
+typedef struct JPC_VehicleSettings {
+	JPC_Vec3 Up;
+	JPC_Vec3 Forward;
+	float MaxPitchRollAngle;
+
+	uint32_t NumWheels;
+	JPC_VehicleWheelSettings Wheels[JPC_VEHICLE_MAX_WHEELS];
+
+	float EngineMaxTorque;
+	float EngineMinRPM;
+	float EngineMaxRPM;
+	float EngineInertia;
+	float EngineAngularDamping;
+	JPC_VehicleCurve EngineNormalizedTorque; // x: rpm / max rpm, y: torque fraction
+
+	bool TransmissionManual;
+	uint32_t NumGears;
+	float GearRatios[JPC_VEHICLE_MAX_GEARS];
+	uint32_t NumReverseGears;
+	float ReverseGearRatios[2];
+	float SwitchTime;
+	float ClutchReleaseTime;
+	float SwitchLatency;
+	float ShiftUpRPM;
+	float ShiftDownRPM;
+	float ClutchStrength;
+
+	uint32_t NumDifferentials;
+	JPC_VehicleDifferentialSettings Differentials[2];
+	float DifferentialLimitedSlipRatio;
+
+	uint32_t NumAntiRollBars;
+	JPC_VehicleAntiRollBarSettings AntiRollBars[2];
+
+	JPC_ObjectLayer CollisionLayer;
+	// > 0: cylinder cast with this convex radius fraction; <= 0: ray cast.
+	float CylinderConvexRadiusFraction;
+} JPC_VehicleSettings;
+
+typedef struct JPC_VehicleWheelState {
+	JPC_Vec3 Position;              // world, wheel centre
+	JPC_Quat Rotation;              // world; wheel model X = axle, Y = up
+	float SuspensionLength;
+	float AngularVelocity;
+	float RotationAngle;
+	float SteerAngle;
+	bool HasContact;
+	JPC_Vec3 ContactPosition;
+	JPC_Vec3 ContactNormal;
+	float LongitudinalSlip;
+	float LateralSlip;
+	float CombinedLongitudinalFriction;
+	float CombinedLateralFriction;
+	float SuspensionLambda;
+	float LongitudinalLambda;
+	float LateralLambda;
+} JPC_VehicleWheelState;
+
+typedef struct JPC_VehicleConstraint JPC_VehicleConstraint;
+
+JPC_API void JPC_VehicleWheelSettings_default(JPC_VehicleWheelSettings* settings);
+JPC_API void JPC_VehicleSettings_default(JPC_VehicleSettings* settings);
+// Creates the constraint, adds it to the system as constraint AND step listener.
+JPC_API JPC_VehicleConstraint* JPC_VehicleConstraint_Create(JPC_PhysicsSystem* system, JPC_Body* body, const JPC_VehicleSettings* settings);
+JPC_API void JPC_VehicleConstraint_Destroy(JPC_PhysicsSystem* system, JPC_VehicleConstraint* self);
+JPC_API void JPC_VehicleConstraint_SetDriverInput(JPC_VehicleConstraint* self, float inForward, float inRight, float inBrake, float inHandBrake);
+// Manual transmission: gear (-1 = first reverse, 0 = neutral, 1.. = forward) and clutch friction 0..1.
+JPC_API void JPC_VehicleConstraint_SetTransmission(JPC_VehicleConstraint* self, int inGear, float inClutchFriction);
+JPC_API int JPC_VehicleConstraint_GetGear(const JPC_VehicleConstraint* self);
+JPC_API float JPC_VehicleConstraint_GetClutchFriction(const JPC_VehicleConstraint* self);
+JPC_API float JPC_VehicleConstraint_GetEngineRPM(const JPC_VehicleConstraint* self);
+JPC_API void JPC_VehicleConstraint_SetEngineRPM(JPC_VehicleConstraint* self, float inRPM);
+JPC_API void JPC_VehicleConstraint_SetEngineMaxTorque(JPC_VehicleConstraint* self, float inTorque);
+JPC_API float JPC_VehicleConstraint_GetWheelSpeedAtClutch(const JPC_VehicleConstraint* self);
+JPC_API void JPC_VehicleConstraint_GetWheelState(const JPC_VehicleConstraint* self, uint32_t inIndex, JPC_VehicleWheelState* outState);
+
+
 #ifdef __cplusplus
 }
 #endif

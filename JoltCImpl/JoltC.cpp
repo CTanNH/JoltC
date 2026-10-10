@@ -36,6 +36,9 @@
 #include <Jolt/Physics/Constraints/SliderConstraint.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/Vehicle/VehicleConstraint.h>
+#include <Jolt/Physics/Vehicle/WheeledVehicleController.h>
+#include <Jolt/Physics/Vehicle/VehicleCollisionTester.h>
 #include <Jolt/RegisterTypes.h>
 
 #include <Jolt/Renderer/DebugRendererSimple.h>
@@ -3216,4 +3219,222 @@ JPC_API void JPC_PhysicsSystem_SetContactListener(
 	JPC_ContactListener* inContactListener)
 {
 	to_jph(self)->SetContactListener(to_jph(inContactListener));
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+// Vehicle (baiSuiShan addition)
+
+static void jpc_curve_to_jph(const JPC_VehicleCurve& in, JPH::LinearCurve& out) {
+	if (in.Count == 0) return;
+	out.Clear();
+	uint32_t n = in.Count < JPC_VEHICLE_MAX_CURVE ? in.Count : JPC_VEHICLE_MAX_CURVE;
+	out.Reserve(n);
+	for (uint32_t i = 0; i < n; ++i) out.AddPoint(in.X[i], in.Y[i]);
+}
+
+JPC_API void JPC_VehicleWheelSettings_default(JPC_VehicleWheelSettings* s) {
+	JPH::WheelSettingsWV d;
+	memset(s, 0, sizeof(*s));
+	s->Position = to_jpc(d.mPosition);
+	s->SuspensionDirection = to_jpc(d.mSuspensionDirection);
+	s->SteeringAxis = to_jpc(d.mSteeringAxis);
+	s->WheelUp = to_jpc(d.mWheelUp);
+	s->WheelForward = to_jpc(d.mWheelForward);
+	s->SuspensionMinLength = d.mSuspensionMinLength;
+	s->SuspensionMaxLength = d.mSuspensionMaxLength;
+	s->SuspensionPreloadLength = d.mSuspensionPreloadLength;
+	s->SuspensionFrequency = d.mSuspensionSpring.mFrequency;
+	s->SuspensionDamping = d.mSuspensionSpring.mDamping;
+	s->Radius = d.mRadius;
+	s->Width = d.mWidth;
+	s->Inertia = d.mInertia;
+	s->AngularDamping = d.mAngularDamping;
+	s->MaxSteerAngle = d.mMaxSteerAngle;
+	s->MaxBrakeTorque = d.mMaxBrakeTorque;
+	s->MaxHandBrakeTorque = d.mMaxHandBrakeTorque;
+}
+
+JPC_API void JPC_VehicleSettings_default(JPC_VehicleSettings* s) {
+	memset(s, 0, sizeof(*s));
+	JPH::VehicleConstraintSettings c;
+	JPH::WheeledVehicleControllerSettings w;
+	s->Up = to_jpc(c.mUp);
+	s->Forward = to_jpc(c.mForward);
+	s->MaxPitchRollAngle = c.mMaxPitchRollAngle;
+	for (uint32_t i = 0; i < JPC_VEHICLE_MAX_WHEELS; ++i) JPC_VehicleWheelSettings_default(&s->Wheels[i]);
+	s->EngineMaxTorque = w.mEngine.mMaxTorque;
+	s->EngineMinRPM = w.mEngine.mMinRPM;
+	s->EngineMaxRPM = w.mEngine.mMaxRPM;
+	s->EngineInertia = w.mEngine.mInertia;
+	s->EngineAngularDamping = w.mEngine.mAngularDamping;
+	s->TransmissionManual = false;
+	s->NumGears = (uint32_t)w.mTransmission.mGearRatios.size();
+	for (uint32_t i = 0; i < s->NumGears && i < JPC_VEHICLE_MAX_GEARS; ++i) s->GearRatios[i] = w.mTransmission.mGearRatios[i];
+	s->NumReverseGears = 1;
+	s->ReverseGearRatios[0] = w.mTransmission.mReverseGearRatios[0];
+	s->SwitchTime = w.mTransmission.mSwitchTime;
+	s->ClutchReleaseTime = w.mTransmission.mClutchReleaseTime;
+	s->SwitchLatency = w.mTransmission.mSwitchLatency;
+	s->ShiftUpRPM = w.mTransmission.mShiftUpRPM;
+	s->ShiftDownRPM = w.mTransmission.mShiftDownRPM;
+	s->ClutchStrength = w.mTransmission.mClutchStrength;
+	s->DifferentialLimitedSlipRatio = w.mDifferentialLimitedSlipRatio;
+	s->CylinderConvexRadiusFraction = 0.1f;
+}
+
+struct JPC_VehicleHandle {
+	JPH::Ref<JPH::VehicleConstraint> constraint;
+	JPH::WheeledVehicleController* controller;
+};
+
+static JPC_VehicleHandle* vh(JPC_VehicleConstraint* p) { return reinterpret_cast<JPC_VehicleHandle*>(p); }
+static const JPC_VehicleHandle* vh(const JPC_VehicleConstraint* p) { return reinterpret_cast<const JPC_VehicleHandle*>(p); }
+
+JPC_API JPC_VehicleConstraint* JPC_VehicleConstraint_Create(JPC_PhysicsSystem* system, JPC_Body* body, const JPC_VehicleSettings* s) {
+	JPH::VehicleConstraintSettings vs;
+	vs.mUp = to_jph(s->Up);
+	vs.mForward = to_jph(s->Forward);
+	vs.mMaxPitchRollAngle = s->MaxPitchRollAngle;
+
+	uint32_t nw = s->NumWheels < JPC_VEHICLE_MAX_WHEELS ? s->NumWheels : JPC_VEHICLE_MAX_WHEELS;
+	for (uint32_t i = 0; i < nw; ++i) {
+		const JPC_VehicleWheelSettings& in = s->Wheels[i];
+		JPH::WheelSettingsWV* w = new JPH::WheelSettingsWV;
+		w->mPosition = to_jph(in.Position);
+		w->mSuspensionDirection = to_jph(in.SuspensionDirection);
+		w->mSteeringAxis = to_jph(in.SteeringAxis);
+		w->mWheelUp = to_jph(in.WheelUp);
+		w->mWheelForward = to_jph(in.WheelForward);
+		w->mSuspensionMinLength = in.SuspensionMinLength;
+		w->mSuspensionMaxLength = in.SuspensionMaxLength;
+		w->mSuspensionPreloadLength = in.SuspensionPreloadLength;
+		w->mSuspensionSpring.mMode = JPH::ESpringMode::FrequencyAndDamping;
+		w->mSuspensionSpring.mFrequency = in.SuspensionFrequency;
+		w->mSuspensionSpring.mDamping = in.SuspensionDamping;
+		w->mRadius = in.Radius;
+		w->mWidth = in.Width;
+		w->mInertia = in.Inertia;
+		w->mAngularDamping = in.AngularDamping;
+		w->mMaxSteerAngle = in.MaxSteerAngle;
+		w->mMaxBrakeTorque = in.MaxBrakeTorque;
+		w->mMaxHandBrakeTorque = in.MaxHandBrakeTorque;
+		jpc_curve_to_jph(in.LongitudinalFriction, w->mLongitudinalFriction);
+		jpc_curve_to_jph(in.LateralFriction, w->mLateralFriction);
+		vs.mWheels.push_back(w);
+	}
+
+	JPH::WheeledVehicleControllerSettings* cs = new JPH::WheeledVehicleControllerSettings;
+	cs->mEngine.mMaxTorque = s->EngineMaxTorque;
+	cs->mEngine.mMinRPM = s->EngineMinRPM;
+	cs->mEngine.mMaxRPM = s->EngineMaxRPM;
+	cs->mEngine.mInertia = s->EngineInertia;
+	cs->mEngine.mAngularDamping = s->EngineAngularDamping;
+	jpc_curve_to_jph(s->EngineNormalizedTorque, cs->mEngine.mNormalizedTorque);
+	cs->mTransmission.mMode = s->TransmissionManual ? JPH::ETransmissionMode::Manual : JPH::ETransmissionMode::Auto;
+	cs->mTransmission.mGearRatios.clear();
+	for (uint32_t i = 0; i < s->NumGears && i < JPC_VEHICLE_MAX_GEARS; ++i) cs->mTransmission.mGearRatios.push_back(s->GearRatios[i]);
+	cs->mTransmission.mReverseGearRatios.clear();
+	for (uint32_t i = 0; i < s->NumReverseGears && i < 2; ++i) cs->mTransmission.mReverseGearRatios.push_back(s->ReverseGearRatios[i]);
+	cs->mTransmission.mSwitchTime = s->SwitchTime;
+	cs->mTransmission.mClutchReleaseTime = s->ClutchReleaseTime;
+	cs->mTransmission.mSwitchLatency = s->SwitchLatency;
+	cs->mTransmission.mShiftUpRPM = s->ShiftUpRPM;
+	cs->mTransmission.mShiftDownRPM = s->ShiftDownRPM;
+	cs->mTransmission.mClutchStrength = s->ClutchStrength;
+	for (uint32_t i = 0; i < s->NumDifferentials && i < 2; ++i) {
+		JPH::VehicleDifferentialSettings d;
+		d.mLeftWheel = s->Differentials[i].LeftWheel;
+		d.mRightWheel = s->Differentials[i].RightWheel;
+		d.mDifferentialRatio = s->Differentials[i].DifferentialRatio;
+		d.mLeftRightSplit = s->Differentials[i].LeftRightSplit;
+		d.mLimitedSlipRatio = s->Differentials[i].LimitedSlipRatio;
+		d.mEngineTorqueRatio = s->Differentials[i].EngineTorqueRatio;
+		cs->mDifferentials.push_back(d);
+	}
+	cs->mDifferentialLimitedSlipRatio = s->DifferentialLimitedSlipRatio;
+	vs.mController = cs;
+	for (uint32_t i = 0; i < s->NumAntiRollBars && i < 2; ++i) {
+		JPH::VehicleAntiRollBar b;
+		b.mLeftWheel = s->AntiRollBars[i].LeftWheel;
+		b.mRightWheel = s->AntiRollBars[i].RightWheel;
+		b.mStiffness = s->AntiRollBars[i].Stiffness;
+		vs.mAntiRollBars.push_back(b);
+	}
+
+	JPC_VehicleHandle* h = new JPC_VehicleHandle;
+	h->constraint = new JPH::VehicleConstraint(*to_jph(body), vs);
+	if (s->CylinderConvexRadiusFraction > 0.0f)
+		h->constraint->SetVehicleCollisionTester(new JPH::VehicleCollisionTesterCastCylinder(s->CollisionLayer, s->CylinderConvexRadiusFraction));
+	else
+		h->constraint->SetVehicleCollisionTester(new JPH::VehicleCollisionTesterRay(s->CollisionLayer, to_jph(s->Up)));
+	h->controller = static_cast<JPH::WheeledVehicleController*>(h->constraint->GetController());
+	to_jph(system)->AddConstraint(h->constraint);
+	to_jph(system)->AddStepListener(h->constraint);
+	return reinterpret_cast<JPC_VehicleConstraint*>(h);
+}
+
+JPC_API void JPC_VehicleConstraint_Destroy(JPC_PhysicsSystem* system, JPC_VehicleConstraint* self) {
+	JPC_VehicleHandle* h = vh(self);
+	to_jph(system)->RemoveStepListener(h->constraint);
+	to_jph(system)->RemoveConstraint(h->constraint);
+	delete h;
+}
+
+JPC_API void JPC_VehicleConstraint_SetDriverInput(JPC_VehicleConstraint* self, float inForward, float inRight, float inBrake, float inHandBrake) {
+	vh(self)->controller->SetDriverInput(inForward, inRight, inBrake, inHandBrake);
+}
+
+JPC_API void JPC_VehicleConstraint_SetTransmission(JPC_VehicleConstraint* self, int inGear, float inClutchFriction) {
+	vh(self)->controller->GetTransmission().Set(inGear, inClutchFriction);
+}
+
+JPC_API int JPC_VehicleConstraint_GetGear(const JPC_VehicleConstraint* self) {
+	return vh(self)->controller->GetTransmission().GetCurrentGear();
+}
+
+JPC_API float JPC_VehicleConstraint_GetClutchFriction(const JPC_VehicleConstraint* self) {
+	return vh(self)->controller->GetTransmission().GetClutchFriction();
+}
+
+JPC_API float JPC_VehicleConstraint_GetEngineRPM(const JPC_VehicleConstraint* self) {
+	return vh(self)->controller->GetEngine().GetCurrentRPM();
+}
+
+JPC_API void JPC_VehicleConstraint_SetEngineRPM(JPC_VehicleConstraint* self, float inRPM) {
+	vh(self)->controller->GetEngine().SetCurrentRPM(inRPM);
+}
+
+JPC_API void JPC_VehicleConstraint_SetEngineMaxTorque(JPC_VehicleConstraint* self, float inTorque) {
+	vh(self)->controller->GetEngine().mMaxTorque = inTorque;
+}
+
+JPC_API float JPC_VehicleConstraint_GetWheelSpeedAtClutch(const JPC_VehicleConstraint* self) {
+	return vh(self)->controller->GetWheelSpeedAtClutch();
+}
+
+JPC_API void JPC_VehicleConstraint_GetWheelState(const JPC_VehicleConstraint* self, uint32_t inIndex, JPC_VehicleWheelState* out) {
+	const JPC_VehicleHandle* h = vh(self);
+	memset(out, 0, sizeof(*out));
+	if (inIndex >= h->constraint->GetWheels().size()) return;
+	const JPH::WheelWV* w = static_cast<const JPH::WheelWV*>(h->constraint->GetWheel(inIndex));
+	JPH::RMat44 t = h->constraint->GetWheelWorldTransform(inIndex, JPH::Vec3::sAxisX(), JPH::Vec3::sAxisY());
+	out->Position = to_jpc(JPH::Vec3(t.GetTranslation()));
+	out->Rotation = to_jpc(t.GetQuaternion());
+	out->SuspensionLength = w->GetSuspensionLength();
+	out->AngularVelocity = w->GetAngularVelocity();
+	out->RotationAngle = w->GetRotationAngle();
+	out->SteerAngle = w->GetSteerAngle();
+	out->HasContact = w->HasContact();
+	if (out->HasContact) {
+		out->ContactPosition = to_jpc(JPH::Vec3(w->GetContactPosition()));
+		out->ContactNormal = to_jpc(w->GetContactNormal());
+	}
+	out->LongitudinalSlip = w->mLongitudinalSlip;
+	out->LateralSlip = w->mLateralSlip;
+	out->CombinedLongitudinalFriction = w->mCombinedLongitudinalFriction;
+	out->CombinedLateralFriction = w->mCombinedLateralFriction;
+	out->SuspensionLambda = w->GetSuspensionLambda();
+	out->LongitudinalLambda = w->GetLongitudinalLambda();
+	out->LateralLambda = w->GetLateralLambda();
 }
